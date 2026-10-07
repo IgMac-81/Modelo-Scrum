@@ -253,9 +253,11 @@ class GovernancaForm:
         except sqlite3.Error as error:
             messagebox.showerror("Erro ao carregar governança", str(error), parent=self.root)
             self.records = []
+        if not self.editing_id:
+            self._populate_backlog_options()
         self.apply_filters()
         if not self.editing_id:
-            self.id_var.set(self._next_id())
+            self.id_var.set(str(self._next_id()))
             self.id_entry.configure(state="readonly")
 
     def _next_id(self):
@@ -320,7 +322,7 @@ class GovernancaForm:
             values = (*row[:5], f"{row[5]} histórias")
             self.tree.insert("", "end", iid=str(index), values=values, tags=("even" if index % 2 == 0 else "odd",))
         self.count_label.configure(text=f"{len(filtered)} POLÍTICAS" if len(filtered) != 1 else "1 POLÍTICA")
-        visible_rows = [tuple(row[:5]) + (f"{row[5]} histórias",) for row in self.records]
+        visible_rows = [tuple(row[:5]) + (f"{row[5]} histórias",) for row in filtered]
         fit_tree_columns(self.tree, self.root, GRID_COLUMNS, visible_rows)
 
     def search_governance(self):
@@ -389,16 +391,6 @@ class GovernancaForm:
             messagebox.showinfo("Selecione uma política", "Escolha uma linha para editar.", parent=self.root)
             return
         self.load_selected()
-
-    def search_policy(self):
-        value = simpledialog.askinteger("Pesquisar política", "Informe o Id_Gov:", parent=self.root, minvalue=1)
-        if value is None:
-            return
-        record = next((row for row in self.records if int(row[0]) == value), None)
-        if record:
-            self._load_record(record)
-        else:
-            messagebox.showinfo("Política não encontrada", f"Id_Gov {value} não existe.", parent=self.root)
 
     def delete_selected(self):
         selection = self.tree.selection()
