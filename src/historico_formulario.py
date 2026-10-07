@@ -361,21 +361,23 @@ class HistoricoSprintsForm:
             self.empty_label.place_forget()
         else:
             self.empty_label.place(relx=0.5, rely=0.5, anchor="center")
+
         for index, row in enumerate(filtered):
             velocity = self._format_velocity(row[8])
             values = tuple(row[:8]) + (velocity, row[9], row[10])
             self.tree.insert("", "end", iid=str(index), values=values, tags=("even" if index % 2 == 0 else "odd",))
-        self._fit_columns()
+        self._fit_columns(filtered)
         self.count_label.configure(text=f"{len(filtered)} REGISTROS" if len(filtered) != 1 else "1 REGISTRO")
 
-    def _fit_columns(self):
+
+    def _fit_columns(self, rows):
         columns = (
             ("id", "Id_Historico", 0, 110), ("task", "Id_Task", 1, 90), ("sprint", "Sprint", 2, 110),
             ("story", "User_Story", 3, 220), ("start", "Início", 4, 110), ("end", "Fim", 5, 110),
             ("planned", "Planejados", 6, 100), ("delivered", "Entregues", 7, 100),
             ("velocity", "Velocity_%", 8, 100), ("capacity", "Capacidade", 9, 115), ("status", "Status", 10, 130),
         )
-        rows = [tuple(row[:8]) + (self._format_velocity(row[8]), row[9], row[10]) for row in self.records]
+        rows = [tuple(row[:8]) + (self._format_velocity(row[8]), row[9], row[10]) for row in rows]
         fit_tree_columns(self.tree, self.root, columns, rows)
 
     @staticmethod
