@@ -41,9 +41,12 @@ def _to_hours(value):
     if not text:
         return 0.0
     if ":" in text:
-        hours, _, minutes = text.partition(":")
+        parts = text.split(":")
         try:
-            return int(hours) + int(minutes) / 60
+            hours = int(parts[0])
+            minutes = int(parts[1]) if len(parts) > 1 else 0
+            seconds = int(parts[2]) if len(parts) > 2 else 0
+            return hours + minutes / 60 + seconds / 3600
         except ValueError:
             return 0.0
     try:
