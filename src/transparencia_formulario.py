@@ -253,12 +253,8 @@ class TransparenciaForm:
             self.records = []
         visibilities = sorted({row[4] for row in self.records if row[4]})
         self.visibility_combo.configure(values=visibilities)
-        visibilities = sorted({row[4] for row in self.records if row[4]})
-        self.visibility_combo.configure(values=visibilities)
         if not self.editing_id:
             self._populate_backlog_options()
-        self.apply_filters()
-
         self.apply_filters()
         if self.editing_id is None:
             self.id_var.set(str(self._next_id()))
@@ -323,7 +319,7 @@ class TransparenciaForm:
             values = (*row[:5], row[6] or "SEM HISTÓRIAS VINCULADAS")
             self.tree.insert("", "end", iid=str(index), values=values, tags=("even" if index % 2 == 0 else "odd",))
         self.count_label.configure(text=f"{len(filtered)} RELATÓRIOS" if len(filtered) != 1 else "1 RELATÓRIO")
-        grid_rows = [tuple(row[:5]) + (row[6] or "SEM HISTÓRIAS VINCULADAS",) for row in self.records]
+        grid_rows = [tuple(row[:5]) + (row[6] or "SEM HISTÓRIAS VINCULADAS",) for row in filtered]
         fit_tree_columns(self.tree, self.root, GRID_COLUMNS, grid_rows)
 
     def search_transparencia(self):
