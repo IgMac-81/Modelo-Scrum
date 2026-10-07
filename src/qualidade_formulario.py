@@ -518,6 +518,8 @@ class QualidadeForm:
         ]))
         self.status_options = statuses
         self.status_combo.configure(values=statuses)
+        if not self.editing_id:
+            self._populate_backlog_options()
         self.apply_filters()
         if self.editing_id is None:
             self.id_var.set(str(self._next_id()))
@@ -593,7 +595,7 @@ class QualidadeForm:
         self.count_label.configure(text=f"{len(filtered)} MÉTRICAS" if len(filtered) != 1 else "1 MÉTRICA")
         grid_rows = [
             (*row[:4], self._format_percentage(scores_by_id[int(row[0])]), row[4], row[6] or "SEM HISTÓRIAS VINCULADAS")
-            for row in effective_records
+            for row in filtered
         ]
         fit_tree_columns(self.tree, self.root, GRID_COLUMNS, grid_rows)
 
