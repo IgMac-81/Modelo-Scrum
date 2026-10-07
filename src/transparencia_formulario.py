@@ -253,6 +253,12 @@ class TransparenciaForm:
             self.records = []
         visibilities = sorted({row[4] for row in self.records if row[4]})
         self.visibility_combo.configure(values=visibilities)
+        visibilities = sorted({row[4] for row in self.records if row[4]})
+        self.visibility_combo.configure(values=visibilities)
+        if not self.editing_id:
+            self._populate_backlog_options()
+        self.apply_filters()
+
         self.apply_filters()
         if self.editing_id is None:
             self.id_var.set(str(self._next_id()))
