@@ -33,6 +33,19 @@ TRANSFER_HEADERS = (
 
 
 class SprintBacklogForm:
+    """
+    Classe responsável por construir e gerenciar o formulário gráfico (Tkinter)
+    do Sprint Backlog. Ela integra:
+    - Interface de cadastro e edição de tarefas da sprint
+    - Conexão com o banco de dados (SQLite)
+    - Estilização dos componentes visuais (ttk.Style)
+    - Funções de importação/exportação (CSV/Excel)
+    - Aplicação de filtros e busca nas tarefas
+
+    Em resumo, centraliza toda a lógica da tela de Sprint Backlog dentro do
+    modelo Scrum, permitindo ao usuário cadastrar, editar, excluir e visualizar
+    tarefas de forma prática.
+    """
     def __init__(self, root, return_to_menu):
         self.root = root
         self.return_to_menu = return_to_menu
