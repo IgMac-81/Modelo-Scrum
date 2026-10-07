@@ -517,6 +517,9 @@ class SprintBacklogForm:
         except sqlite3.Error as error:
             messagebox.showerror("Erro ao carregar sprints", str(error), parent=self.root)
             self.records = []
+        if not self.editing_id:
+            self.story_options = get_product_backlog_stories()
+            self.story_map = {str(row[0]).upper(): row for row in self.story_options}
         self.apply_filters()
         if not self.editing_id:
             self.id_var.set(self._next_task_id())
@@ -611,7 +614,7 @@ class SprintBacklogForm:
             ("remaining", "Restantes", 8, 90), ("status", "Status", 9, 130),
             ("date", "Conclusão", 10, 110),
         )
-        grid_rows = [tuple(row[:10]) + (row[10] or "",) for row in self.records]
+        grid_rows = [tuple(row[:10]) + (row[10] or "",) for row in filtered]
         fit_tree_columns(self.tree, self.root, sprint_columns, grid_rows)
         self.count_label.configure(text=f"{len(filtered)} TAREFAS" if len(filtered) != 1 else "1 TAREFA")
 
