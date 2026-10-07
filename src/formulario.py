@@ -52,7 +52,7 @@ FORM_MANUALS = {
     "Sprints Backlog": "OBJETIVO\nDetalhar as tarefas técnicas de cada história e acompanhar a execução da sprint.\n\nDADOS\nId_Task, título da sprint, User_Story, subtarefa, responsável, Story_Points, horas estimadas/gastas/restantes, status e data de conclusão.\n\nAUTOMAÇÕES\nUser_Story traz Id e módulo do Product Backlog; Story_Points vem da história. Horas restantes = máximo(0, estimadas - gastas), ou 00:00 quando concluída.\n\nAÇÕES\nSelecione ou pesquise tarefas para editar/excluir. Nova tarefa prepara um registro; Salvar persiste no SQLite. Os botões acima do grid importam e exportam CSV/Excel; linhas com Id_Task já existente são ignoradas.",
     "Histórico de Sprints": "OBJETIVO\nManter o histórico de planejamento e entrega das tarefas em cada sprint.\n\nDADOS\nId_Historico, Id_Task, sprint, User_Story, datas, pontos planejados/entregues, velocidade, capacidade e status.\n\nAUTOMAÇÕES\nId_Task carrega sprint, história, pontos e horas estimadas de Sprints_Backlog. Pontos entregues iguala os planejados quando Status_Sprint é CONCLUÍDO; nos demais casos é zero. Velocity_% = entregues / planejados × 100; se planejados for zero, 0,0%.\n\nAÇÕES\nUse a busca, filtros e botões do grid para localizar, editar ou excluir históricos. Os botões acima do grid importam e exportam CSV/Excel; o Id_Historico é gerado automaticamente na importação.",
     "Governança": "OBJETIVO\nRegistrar políticas, responsáveis, periodicidade e situação de governança.\n\nVÍNCULOS\nSelecione uma ou mais histórias do Product_Backlog para associar à política. Os vínculos são salvos em Backlog_Governanca.\n\nAÇÕES\nNova política inicia cadastro; Salvar grava ou atualiza; Editar/Excluir atuam sobre a linha selecionada. A busca filtra o grid. Os botões acima do grid importam e exportam CSV/Excel; políticas com nome já existente são ignoradas.",
-    "Transparência": "OBJETIVO\nRegistrar os relatórios publicados, frequência, responsável e público de visibilidade.\n\nVÍNCULOS\nSelecione uma ou mais histórias do Product_Backlog; as referências ficam em Backlog_Transparencia e aparecem no grid.\n\nAÇÕES\nNovo relatório inicia cadastro; Salvar grava ou atualiza; Editar/Excluir atuam sobre a linha selecionada. A busca filtra o grid. Os botões acima do grid importam e exportam CSV/Excel; relatórios com nome já existente são ignorados.",
+    "Transparência": "OBJETIVO\nRegistrar os relatórios publicados, frequência, responsável e público de visibilidade.\n\nVÍNCULOS\nSelecione uma ou mais histórias do Product_Backlog; as referências ficam em Backlog_Transparencia e aparecem no grid.\n\nAÇÕES\nNovo relatório inicia cadastro; Salvar grava ou atualiza; Editar/Excluir atuam sobre a linha selecionada. A busca filtra o grid. Os botões acima do grid importam e exportam CSV/Excel; relatórios com nome já existente são ignoradas.",
     "Qualidade": "OBJETIVO\nAcompanhar métricas de qualidade comparando Valor_Real com Valor_Alvo.\n\nINDICADORES\nAtingimento por métrica = mínimo(Valor_Real / Valor_Alvo, 1) × 100. O índice do projeto é a média dos atingimentos.\n\nFONTES\nVelocity e tempo médio podem vir de tarefas concluídas em Sprints_Backlog. Coverage aceita relatório Coverage.py JSON/XML. Disponibilidade aceita CSV online_hours,total_hours ou online_seconds,total_seconds. Sem fonte externa, Valor_Real é manual.\n\nVÍNCULOS\nAssocie histórias do Product_Backlog; referências ficam em Backlog_Qualidade.\n\nAÇÕES\nOs botões acima do grid importam e exportam CSV/Excel; métricas com nome já existente são ignoradas.",
 }
 
@@ -330,7 +330,7 @@ class BacklogApp:
         self.menu_frame.pack_forget()
         self.header.pack_forget()
         self.content.pack_forget()
-        for form_name in ("sprint_form", "history_form", "governance_form", "dashboard_form"):
+        for form_name in ("sprint_form", "history_form", "governance_form", "dashboard_form", "quality_form"):
             form = getattr(self, form_name, None)
             if form:
                 form.frame.pack_forget()
@@ -685,7 +685,7 @@ class BacklogApp:
             self.empty_label.place(relx=0.5, rely=0.5, anchor="center")
         for index, record in enumerate(filtered):
             self.tree.insert("", "end", iid=str(index), values=(record[0], record[1], record[2], record[3], record[4], record[5], record[6]), tags=("even" if index % 2 == 0 else "odd",))
-        grid_rows = [tuple(record[index] for index in range(7)) for record in self.records]
+        grid_rows = [tuple(record[index] for index in range(7)) for record in filtered]
         fit_tree_columns(self.tree, self.root, BACKLOG_GRID_COLUMNS, grid_rows)
         self.count_label.configure(text=f"{len(filtered)} ITENS" if len(filtered) != 1 else "1 ITEM")
 
