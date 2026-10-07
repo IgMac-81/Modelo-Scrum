@@ -1,4 +1,5 @@
 import sqlite3
+import shutil
 import sys
 from pathlib import Path
 
@@ -12,8 +13,8 @@ _DB_DIR.mkdir(parents=True, exist_ok=True)
 SEED_DB = _BUNDLE_DIR / "db" / "agile_backlog.db"
 DB_NAME = _DB_DIR / "agile_backlog.db"
 if not DB_NAME.exists() and SEED_DB != DB_NAME and SEED_DB.exists():
-    import shutil
     shutil.copy(SEED_DB, DB_NAME)
+
 
 def get_fibonacci():
     conn = sqlite3.connect(DB_NAME)
@@ -21,7 +22,8 @@ def get_fibonacci():
     cursor.execute("SELECT Story_Points, Significado, Exemplos_de_Tarefas FROM Fibonacci")
     data = cursor.fetchall()
     conn.close()
-    return {row[0]: {"Significado": row[1], "Exemplos": row[2]} for row in data}
+    return {str(row[0]): {"Significado": row[1], "Exemplos": row[2]} for row in data}
+    # ...existing code...
 
 def get_sprints():
     conn = sqlite3.connect(DB_NAME)
