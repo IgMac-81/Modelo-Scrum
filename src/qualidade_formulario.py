@@ -1,12 +1,12 @@
 import csv
+import importlib
 import json
+import math
 import re
 import sqlite3
 import tkinter as tk
 from tkinter import filedialog, messagebox, simpledialog, ttk
 import xml.etree.ElementTree as ET
-
-import pandas as pd
 
 from database import (
     delete_qualidade,
@@ -20,6 +20,16 @@ from database import (
 )
 from grid_sizing import fit_tree_columns
 import data_transfer as transfer
+
+
+def _load_optional_pandas(importer=importlib.import_module):
+    try:
+        return importer("pandas"), None
+    except ImportError as error:
+        return None, error
+
+
+_pandas, PANDAS_IMPORT_ERROR = _load_optional_pandas()
 
 
 PANEL_STYLE = "Panel.TFrame"
@@ -625,11 +635,11 @@ class QualidadeForm:
     def apply_filters(self):
         query = self.search_var.get().strip().casefold()
         effective_records = self._effective_records()
-        dataframe, overall_index = self._calculate_quality_metrics(effective_records)
+        attainments, overall_index = self._calculate_quality_metrics(effective_records)
         self.quality_index_var.set(self._format_percentage(overall_index))
         scores_by_id = {
-            int(dataframe.loc[index, "Id_Qualidade"]): dataframe.loc[index, "Atingimento"]
-            for index in dataframe.index
+            int(row[0]): attainment
+            for row, attainment in zip(effective_records, attainments)
         }
         filtered = [row for row in effective_records if not query or query in " ".join(str(value or "") for value in row).casefold()]
         self.tree.delete(*self.tree.get_children())
@@ -657,20 +667,23 @@ class QualidadeForm:
 
     @staticmethod
     def _calculate_quality_metrics(records):
-        dataframe = pd.DataFrame(records, columns=QUALITY_RECORD_COLUMNS)
-        if dataframe.empty:
-            dataframe["Atingimento"] = pd.Series(dtype="float64")
-            return dataframe, 0.0
-        target_values = pd.to_numeric(dataframe["Valor_Alvo"], errors="coerce").map(
-            lambda value: float(transfer.normalize_one_decimal(value)) if pd.notna(value) else 0.0
-        )
-        actual_values = pd.to_numeric(dataframe["Valor_Real"], errors="coerce").map(
-            lambda value: float(transfer.normalize_one_decimal(value)) if pd.notna(value) else 0.0
-        )
-        attainment = actual_values.div(target_values)
-        attainment = attainment.replace({float("inf"): 1.0, float("-inf"): 0.0}).clip(upper=1).fillna(0)
-        dataframe["Atingimento"] = attainment
-        return dataframe, float(attainment.mean())
+        attainments = []
+        for record in records:
+            values = []
+            for value in (record[2], record[3]):
+                try:
+                    number = float(transfer.normalize_one_decimal(value)) if value is not None else 0.0
+                except (TypeError, ValueError):
+                    number = 0.0
+                values.append(number if math.isfinite(number) else 0.0)
+            target, actual = values
+            if target == 0:
+                attainment = 1.0 if actual > 0 else 0.0
+            else:
+                attainment = min(actual / target, 1.0)
+            attainments.append(attainment)
+        average = sum(attainments) / len(attainments) if attainments else 0.0
+        return attainments, average
 
     @staticmethod
     def _format_percentage(value):
@@ -684,10 +697,10 @@ class QualidadeForm:
             self.achievement_var.set("0,0%")
             self._update_quality_index()
             return
-        dataframe, _overall = self._calculate_quality_metrics(
+        attainments, _overall = self._calculate_quality_metrics(
             [(None, None, target_value, actual_value, None, 0, "")]
         )
-        self.achievement_var.set(self._format_percentage(dataframe.loc[0, "Atingimento"]))
+        self.achievement_var.set(self._format_percentage(attainments[0]))
         self._update_quality_index((target_value, actual_value))
 
     def search_quality(self):

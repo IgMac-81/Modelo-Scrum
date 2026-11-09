@@ -1,9 +1,11 @@
 import csv
 import shutil
+import builtins
 
 import database
 import dashboard_formulario
 import data_transfer
+import formulario
 import qualidade_formulario
 
 
@@ -41,11 +43,81 @@ def test_quality_form_formats_values_and_calculates_rounded_attainment():
     assert form._format_decimal(80) == "80,0"
     assert form._format_percentage(22.222 / 100) == "22,2%"
 
-    frame, average = form._calculate_quality_metrics([
+    attainments, average = form._calculate_quality_metrics([
         (1, "COBERTURA", 80, 22.222, "PENDENTE", 0, ""),
     ])
-    assert abs(frame.loc[0, "Atingimento"] - 0.2775) < 1e-12
+    assert abs(attainments[0] - 0.2775) < 1e-12
     assert abs(average - 0.2775) < 1e-12
+
+
+def test_quality_calculation_and_module_loading_fall_back_without_pandas():
+    def blocked_pandas(_name):
+        raise ImportError("DLL load failed while importing timezones")
+
+    pandas_module, import_error = qualidade_formulario._load_optional_pandas(blocked_pandas)
+    assert pandas_module is None
+    assert "timezones" in str(import_error)
+
+    attainments, average = qualidade_formulario.QualidadeForm._calculate_quality_metrics([
+        (1, "COBERTURA", 80, 22.222, "PENDENTE", 0, ""),
+        (2, "TESTE", 0, 3, "PENDENTE", 0, ""),
+        (3, "VAZIA", 0, 0, "PENDENTE", 0, ""),
+    ])
+    assert abs(attainments[0] - 0.2775) < 1e-12
+    assert attainments[1:] == [1.0, 0.0]
+    assert abs(average - (0.2775 + 1.0) / 3) < 1e-12
+
+
+def test_quality_navigation_reports_import_error_without_hiding_main_menu(monkeypatch):
+    app = object.__new__(formulario.BacklogApp)
+    app.root = object()
+    errors = []
+    monkeypatch.setattr(formulario.messagebox, "showerror", lambda *args, **kwargs: errors.append(args))
+    original_import = builtins.__import__
+
+    def blocked_import(name, *args, **kwargs):
+        if name == "qualidade_formulario":
+            raise ImportError("DLL load failed while importing timezones")
+        return original_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", blocked_import)
+    app.show_quality()
+
+    assert errors
+    assert "timezones" in errors[0][1]
+    assert not hasattr(app, "menu_frame")
+
+
+def test_quality_navigation_warns_but_opens_when_pandas_uses_fallback(monkeypatch):
+    class FakeFrame:
+        def pack(self, *_args, **_kwargs):
+            pass
+
+        def pack_forget(self):
+            pass
+
+    class FakeQualityForm:
+        def __init__(self, _root, _callback):
+            self.frame = FakeFrame()
+
+    app = object.__new__(formulario.BacklogApp)
+    app.root = type("Root", (), {"title": lambda *_args: None})()
+    app.menu_frame = FakeFrame()
+    app.header = FakeFrame()
+    app.content = FakeFrame()
+    app.show_main_menu = lambda: None
+    app._quality_fallback_warning_shown = False
+    warnings = []
+    monkeypatch.setattr(qualidade_formulario, "PANDAS_IMPORT_ERROR", ImportError("blocked timezones DLL"))
+    monkeypatch.setattr(qualidade_formulario, "QualidadeForm", FakeQualityForm)
+    monkeypatch.setattr(formulario.messagebox, "showwarning", lambda *args, **kwargs: warnings.append(args))
+
+    app.show_quality()
+
+    assert app.quality_form is not None
+    assert app._quality_fallback_warning_shown
+    assert warnings
+    assert "cálculos alternativos sem pandas" in warnings[0][1]
 
 
 def test_quality_decimal_input_validation_rejects_more_than_one_fractional_digit():
@@ -149,17 +221,54 @@ def test_dashboard_chart_builders_use_consistent_wrapped_x_labels(monkeypatch):
         figure = Figure(figsize=(5.4, 3.1), dpi=100)
         axis = figure.add_subplot(111)
         draw(axis)
-        form._format_chart_axes(axis)
-        figure.tight_layout(rect=(0.24, 0.24, 0.94, 0.9))
-        figure.canvas.draw()
+        form._fit_chart_layout(figure, axis, title)
         labels = [label for label in axis.get_xticklabels() if label.get_visible()]
-        assert all(label.get_rotation() == 45 for label in labels)
-        assert all(label.get_ha() == "right" for label in labels)
-        assert all(label.get_va() == "top" for label in labels)
-        assert all("\n" in label.get_text() or len(label.get_text()) <= 10 for label in labels)
+        assert all(label.get_rotation() == 0 for label in labels)
+        assert all(label.get_ha() == "center" for label in labels)
+        assert all("\n" in label.get_text() or len(label.get_text()) <= 14 for label in labels)
         bounds = figure.bbox
         for label in labels + [label for label in axis.get_yticklabels() if label.get_visible()]:
             extent = label.get_window_extent()
             assert bounds.contains(*extent.get_points()[0]) and bounds.contains(*extent.get_points()[1]), (
                 title, label.get_text(), extent.bounds, bounds.bounds,
             )
+        assert not dashboard_formulario._labels_overlap(labels, figure), title
+        assert not dashboard_formulario._labels_overlap(
+            [label for label in axis.get_yticklabels() if label.get_visible()], figure,
+        ), title
+
+
+def test_dashboard_chart_layout_expands_dense_categorical_axes_without_overlap():
+    import matplotlib
+    matplotlib.use("Agg")
+    from matplotlib.figure import Figure
+
+    form = object.__new__(dashboard_formulario.DashboardForm)
+    categories = [f"Categoria {index} com descrição extensa" for index in range(12)]
+    figure = Figure(figsize=(5.4, 3.1), dpi=100)
+    axis = figure.add_subplot(111)
+    axis.bar(categories, range(1, len(categories) + 1))
+    form._fit_chart_layout(figure, axis, "Categorias")
+
+    labels = [label for label in axis.get_xticklabels() if label.get_visible()]
+    assert figure.get_size_inches()[0] > 5.4
+    assert figure.get_size_inches()[0] <= 8.0
+    assert all("\n" in label.get_text() for label in labels)
+    assert all(label.get_rotation() == 0 and label.get_ha() == "center" for label in labels)
+    assert not dashboard_formulario._labels_overlap(labels, figure)
+    for label in labels:
+        extent = label.get_window_extent()
+        assert figure.bbox.contains(*extent.get_points()[0])
+        assert figure.bbox.contains(*extent.get_points()[1])
+
+    horizontal_figure = Figure(figsize=(5.4, 3.1), dpi=100)
+    horizontal_axis = horizontal_figure.add_subplot(111)
+    form._bar_counts(horizontal_axis, {name: index for index, name in enumerate(categories, 1)})
+    form._fit_chart_layout(horizontal_figure, horizontal_axis, "Categorias horizontais")
+    y_labels = [label for label in horizontal_axis.get_yticklabels() if label.get_visible()]
+    assert horizontal_figure.get_size_inches()[1] > 3.1
+    assert not dashboard_formulario._labels_overlap(y_labels, horizontal_figure)
+    for label in y_labels:
+        extent = label.get_window_extent()
+        assert horizontal_figure.bbox.contains(*extent.get_points()[0])
+        assert horizontal_figure.bbox.contains(*extent.get_points()[1])

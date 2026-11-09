@@ -6,6 +6,7 @@ from database import connect_db
 from data_transfer import format_one_decimal, normalize_one_decimal
 
 try:
+    from matplotlib.backends.backend_agg import FigureCanvasAgg
     from matplotlib.figure import Figure
     from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
     MATPLOTLIB_OK = True
@@ -74,6 +75,37 @@ def _counts_by(rows, index):
         key = (row[index] or "NÃO INFORMADO").strip() or "NÃO INFORMADO"
         counts[key] = counts.get(key, 0) + 1
     return counts
+
+
+def _is_numeric_tick(label):
+    text = label.strip().replace("%", "").replace(",", ".")
+    if not text:
+        return True
+    try:
+        float(text)
+        return True
+    except ValueError:
+        return False
+
+
+def _labels_overlap(labels, figure):
+    renderer = figure.canvas.get_renderer()
+    bounds = figure.bbox
+    extents = [label.get_window_extent(renderer) for label in labels]
+    for extent in extents:
+        if (
+            extent.x0 < bounds.x0 or extent.y0 < bounds.y0
+            or extent.x1 > bounds.x1 or extent.y1 > bounds.y1
+        ):
+            return True
+    for index, first in enumerate(extents):
+        for second in extents[index + 1:]:
+            if (
+                min(first.x1, second.x1) > max(first.x0, second.x0)
+                and min(first.y1, second.y1) > max(first.y0, second.y0)
+            ):
+                return True
+    return False
 
 
 class DashboardForm:
@@ -156,12 +188,7 @@ class DashboardForm:
         figure = Figure(figsize=(5.4, 3.1), dpi=100, facecolor=PANEL_BG)
         ax = figure.add_subplot(111)
         draw(ax)
-        self._format_chart_axes(ax)
-        ax.set_title(title, fontsize=10, fontweight="bold", color=TEXT_FG, pad=10)
-        ax.tick_params(labelsize=8, colors=MUTED_FG)
-        for spine in ("top", "right"):
-            ax.spines[spine].set_visible(False)
-        figure.tight_layout(rect=(0.24, 0.24, 0.94, 0.9))
+        self._fit_chart_layout(figure, ax, title)
         canvas = FigureCanvasTkAgg(figure, master=holder)
         canvas.draw()
         canvas.get_tk_widget().pack(fill="both", expand=True, padx=8, pady=8)
@@ -169,28 +196,80 @@ class DashboardForm:
     @staticmethod
     def _format_chart_axes(ax):
         x_ticks = ax.get_xticks()
-        x_labels = [
-            textwrap.fill(label.get_text(), width=10, break_long_words=True)
-            for label in ax.get_xticklabels()
-        ]
-        if x_labels:
-            ax.set_xticks(x_ticks[:len(x_labels)], x_labels, rotation=45, ha="right", va="top")
+        x_labels = [label.get_text() for label in ax.get_xticklabels()]
+        x_is_categorical = any(not _is_numeric_tick(label) for label in x_labels)
+        if x_labels and x_is_categorical:
+            wrap_width = max(4, min(12, int(128 / len(x_labels))))
+            wrapped_x_labels = [
+                textwrap.fill(label, width=wrap_width, break_long_words=True, break_on_hyphens=True)
+                for label in x_labels
+            ]
+            ax.set_xticks(x_ticks[:len(wrapped_x_labels)], wrapped_x_labels)
+            for label in ax.get_xticklabels():
+                label.set_rotation(0)
+                label.set_horizontalalignment("center")
+                label.set_verticalalignment("top")
         y_ticks = ax.get_yticks()
-        y_labels = [
-            textwrap.fill(label.get_text(), width=36, break_long_words=True)
-            for label in ax.get_yticklabels()
-        ]
-        if y_labels:
-            ax.set_yticks(y_ticks[:len(y_labels)], y_labels, ha="right")
+        y_labels = [label.get_text() for label in ax.get_yticklabels()]
+        y_is_categorical = any(not _is_numeric_tick(label) for label in y_labels)
+        if y_labels and y_is_categorical:
+            wrapped_y_labels = [
+                textwrap.fill(label, width=28, break_long_words=True, break_on_hyphens=True)
+                for label in y_labels
+            ]
+            ax.set_yticks(y_ticks[:len(wrapped_y_labels)], wrapped_y_labels)
+            for label in ax.get_yticklabels():
+                label.set_horizontalalignment("right")
+                label.set_verticalalignment("center")
         ax.tick_params(
             axis="x", labelsize=6 if len(x_labels) > 6 else 8,
             colors=MUTED_FG,
         )
         ax.tick_params(
-            axis="y", labelsize=5 if len(y_labels) > 6 else 8,
+            axis="y", labelsize=7 if len(y_labels) > 6 else 8,
             colors=MUTED_FG,
         )
-        ax.margins(x=0.15, y=0.15)
+        for ticks, labels, limits in (
+            (x_ticks, ax.get_xticklabels(), ax.get_xlim()),
+            (y_ticks, ax.get_yticklabels(), ax.get_ylim()),
+        ):
+            lower, upper = sorted(limits)
+            for tick, label in zip(ticks, labels):
+                if tick < lower or tick > upper:
+                    label.set_visible(False)
+        return (
+            len(x_labels) if x_is_categorical else 0,
+            max((label.get_text().count("\n") + 1 for label in ax.get_xticklabels()), default=1),
+            len(y_labels) if y_is_categorical else 0,
+            max((label.get_text().count("\n") + 1 for label in ax.get_yticklabels()), default=1),
+        )
+
+    @classmethod
+    def _fit_chart_layout(cls, figure, ax, title):
+        x_categories, x_lines, y_categories, y_lines = cls._format_chart_axes(ax)
+        figure.set_size_inches(
+            max(5.4, min(8.0, 4.6 + x_categories * 0.18)),
+            max(3.1, 2.7 + x_lines * 0.3, 1.7 + y_categories * y_lines * 0.16),
+        )
+        ax.set_title(title, fontsize=10, fontweight="bold", color=TEXT_FG, pad=10)
+        ax.tick_params(colors=MUTED_FG)
+        for spine in ("top", "right"):
+            ax.spines[spine].set_visible(False)
+
+        FigureCanvasAgg(figure)
+        for _attempt in range(8):
+            figure.tight_layout(rect=(0.08, 0.12, 0.97, 0.9))
+            figure.canvas.draw()
+            x_labels = [label for label in ax.get_xticklabels() if label.get_visible() and label.get_text()]
+            y_labels = [label for label in ax.get_yticklabels() if label.get_visible() and label.get_text()]
+            if not _labels_overlap(x_labels, figure) and not _labels_overlap(y_labels, figure):
+                return
+            width, height = figure.get_size_inches()
+            figure.set_size_inches(
+                width * (1.12 if _labels_overlap(x_labels, figure) else 1),
+                height * (1.12 if _labels_overlap(y_labels, figure) else 1),
+            )
+        figure.tight_layout(rect=(0.08, 0.12, 0.97, 0.9))
 
     def _build_charts(self, tab, charts):
         frame = ttk.Frame(tab)

@@ -441,6 +441,32 @@ class BacklogApp:
         self.root.title("Scrum | Transparência")
 
     def show_quality(self):
+        created_quality_form = False
+        if not hasattr(self, "quality_form"):
+            try:
+                from qualidade_formulario import PANDAS_IMPORT_ERROR, QualidadeForm
+
+                self.quality_form = QualidadeForm(self.root, self.show_main_menu)
+                created_quality_form = True
+            except ImportError as error:
+                messagebox.showerror(
+                    "Qualidade indisponível",
+                    "Não foi possível carregar o módulo Qualidade por uma dependência ausente ou bloqueada.\n\n"
+                    f"Detalhes técnicos: {error}",
+                    parent=self.root,
+                )
+                return
+            if PANDAS_IMPORT_ERROR and not getattr(self, "_quality_fallback_warning_shown", False):
+                messagebox.showwarning(
+                    "Qualidade em modo alternativo",
+                    "Uma extensão nativa do pandas não pôde ser carregada. O formulário continuará "
+                    "disponível com os cálculos alternativos sem pandas.\n\n"
+                    "Se o Windows bloqueou o arquivo por Controle de Aplicativos, solicite ao "
+                    "administrador que revise a política para a extensão pandas._libs.tslibs.timezones.\n\n"
+                    f"Detalhes técnicos: {PANDAS_IMPORT_ERROR}",
+                    parent=self.root,
+                )
+                self._quality_fallback_warning_shown = True
         self.menu_frame.pack_forget()
         self.header.pack_forget()
         self.content.pack_forget()
@@ -448,11 +474,7 @@ class BacklogApp:
             form = getattr(self, form_name, None)
             if form:
                 form.frame.pack_forget()
-        if not hasattr(self, "quality_form"):
-            from qualidade_formulario import QualidadeForm
-
-            self.quality_form = QualidadeForm(self.root, self.show_main_menu)
-        else:
+        if not created_quality_form:
             self.quality_form.frame.pack(fill="both", expand=True)
             self.quality_form.refresh_records()
         self.root.title("Scrum | Qualidade")
