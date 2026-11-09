@@ -70,12 +70,24 @@ pip install -r requirements.txt
 
 | Pacote | Uso |
 |---|---|
-| pandas | Cálculo de atingimento/índice na Qualidade |
+| pandas | Dependência opcional para Qualidade; o cálculo usa Python nativo e continua disponível se o carregamento falhar |
 | openpyxl | Importação/exportação Excel |
 | matplotlib | Gráficos dos Dashboards |
 | pytest | Testes |
 
 O Tkinter e o SQLite já vêm com o Python.
+
+Para Python 3.14, o projeto requer pandas 2.3.3 ou superior, limitado à série 2.x.
+No VS Code, selecione o interpretador desejado com **Python: Select Interpreter** e
+instale as dependências no terminal associado a esse mesmo ambiente:
+
+```powershell
+python -m pip install -r requirements.txt
+python -c "import sys, importlib.metadata as m; print(sys.executable); print(sys.version); print('pandas', m.version('pandas'))"
+```
+
+Uma instalação compatível não elimina bloqueios impostos pela política de segurança
+do Windows. Não desative ou contorne a política para executar a aplicação.
 
 ## Como executar
 
@@ -142,7 +154,8 @@ Nas importações CSV/Excel, registros sem campos obrigatórios, referências v�
 | Sintoma | Solução |
 |---|---|
 | `python` não é reconhecido no terminal | Use o caminho completo do interpretador (ex.: `C:/Python314/python.exe src/main.py`) ou adicione o Python ao PATH |
-| `ModuleNotFoundError: No module named 'pandas'` (ou outra dependência) | Execute `pip install -r requirements.txt` |
+| `ModuleNotFoundError: No module named 'pandas'` (ou outra dependência) | Selecione o interpretador correto e execute `python -m pip install -r requirements.txt` nesse ambiente |
+| `DLL load failed while importing timezones` ou bloqueio por Controle de Aplicativo | A Qualidade usa cálculos nativos e informa o erro. Solicite ao administrador que consulte os eventos do AppLocker ou Code Integrity e autorize o arquivo identificado pela política, se apropriado. `pandas\_libs\tslibs\timezones*.pyd` é a extensão cujo carregamento falhou; a mensagem isolada não identifica qual arquivo foi bloqueado |
 | Gráficos dos Dashboards não aparecem | Instale o matplotlib (`pip install matplotlib`); o restante do app continua funcionando |
 | Antivírus/SmartScreen bloqueia o Scrum.exe | Clique em "Mais informações" → "Executar assim mesmo" (comum em executáveis PyInstaller não assinados) |
 | Dados "sumiram" após usar o exe | O exe usa o banco em `db/` **ao lado dele**, não o banco do projeto; copie o `agile_backlog.db` desejado para essa pasta |
