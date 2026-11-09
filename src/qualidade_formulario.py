@@ -1,12 +1,12 @@
 import csv
+import importlib
 import json
+import math
+import re
 import sqlite3
-from decimal import Decimal, InvalidOperation
 import tkinter as tk
 from tkinter import filedialog, messagebox, simpledialog, ttk
 import xml.etree.ElementTree as ET
-
-import pandas as pd
 
 from database import (
     delete_qualidade,
@@ -20,6 +20,16 @@ from database import (
 )
 from grid_sizing import fit_tree_columns
 import data_transfer as transfer
+
+
+def _load_optional_pandas(importer=importlib.import_module):
+    try:
+        return importer("pandas"), None
+    except ImportError as error:
+        return None, error
+
+
+_pandas, PANDAS_IMPORT_ERROR = _load_optional_pandas()
 
 
 PANEL_STYLE = "Panel.TFrame"
@@ -43,7 +53,9 @@ GRID_COLUMNS = (
     ("links", "Histórias vinculadas", 6, 220),
 )
 QUALITY_RECORD_COLUMNS = ("Id_Qualidade", "Metrica", "Valor_Alvo", "Valor_Real", "Status", "Qtd_Vinculos", "Historias")
-TRANSFER_HEADERS = ("Id_Qualidade", "Metrica", "Valor_Alvo", "Valor_Real", "Status")
+TRANSFER_HEADERS = (
+    "Id_Qualidade", "Metrica", "Valor_Alvo", "Valor_Real", "Atingimento", "Status",
+)
 
 
 class QualidadeForm:
@@ -141,14 +153,21 @@ class QualidadeForm:
         self.metric_entry = self._add_entry(f"{METRIC_LABEL} *", self.metric_var, "Ex.: COBERTURA DE TESTES (%)")
         self.target_entry = self._add_entry("Valor-alvo *", self.target_var, "Ex.: 80,0")
         self.actual_entry = self._add_entry("Valor-real *", self.actual_var, "Valor calculado ou medido", info_command=self.show_actual_help)
+        decimal_validator = (self.root.register(self._is_valid_decimal_entry), "%P")
         self.metric_entry.bind(KEY_RELEASE_EVENT, self._on_metric_key)
         self.metric_entry.bind("<FocusOut>", self._refresh_metric_value, add="+")
         for entry in (self.target_entry, self.actual_entry):
+            entry.configure(validate="key", validatecommand=decimal_validator)
             entry.bind(KEY_RELEASE_EVENT, self._normalize_decimal_entry)
+            entry.bind("<FocusOut>", self._format_decimal_entry, add="+")
         self.target_var.trace_add("write", lambda *_args: self._refresh_metric_value())
         self.actual_var.trace_add("write", lambda *_args: self._update_form_achievement())
         self.achievement_entry = self._add_entry("Atingimento (calculado)", self.achievement_var)
-        self.achievement_entry.configure(state="readonly")
+        self.achievement_entry.configure(
+            state="readonly",
+            validate="key",
+            validatecommand=(self.root.register(self._is_valid_achievement_entry), "%P"),
+        )
         self._update_form_achievement()
         ttk.Button(self.form_body, text="Importar fonte externa",
                    command=self.connect_external_source).pack(fill="x", pady=(6, 0))
@@ -229,19 +248,35 @@ class QualidadeForm:
             entry.icursor(min(cursor, len(uppercase)))
 
     @staticmethod
+    def _is_valid_decimal_entry(proposed_value):
+        return bool(re.fullmatch(r"\d*(?:[.,]\d?)?", proposed_value))
+
+    @staticmethod
+    def _is_valid_achievement_entry(proposed_value):
+        return bool(re.fullmatch(r"\d*(?:[.,]\d?)?%?", proposed_value))
+
+    @staticmethod
     def _normalize_decimal_entry(event):
         entry = event.widget
-        value = entry.get().replace(".", ",")
-        allowed = "0123456789,"
-        normalized = "".join(character for character in value if character in allowed)
-        if normalized.count(",") > 1:
-            first_separator = normalized.find(",")
-            normalized = normalized[:first_separator + 1] + normalized[first_separator + 1:].replace(",", "")
+        normalized = entry.get().replace(".", ",")
         if normalized != entry.get():
             cursor = entry.index(tk.INSERT)
             entry.delete(0, tk.END)
             entry.insert(0, normalized)
             entry.icursor(min(cursor, len(normalized)))
+
+    def _format_decimal_entry(self, event):
+        entry = event.widget
+        value = entry.get().strip()
+        if not value or value == getattr(entry, "placeholder", None):
+            return
+        try:
+            formatted = self._format_decimal(self._decimal_from_input(value))
+        except ValueError:
+            return
+        if formatted != value:
+            entry.delete(0, tk.END)
+            entry.insert(0, formatted)
 
     def _populate_backlog_options(self, selected_ids=()):
         selected_ids = set(selected_ids)
@@ -303,14 +338,11 @@ class QualidadeForm:
         text = value.strip().replace(",", ".")
         if not text:
             raise ValueError("Informe um valor numérico.")
-        try:
-            return float(Decimal(text))
-        except InvalidOperation as error:
-            raise ValueError("Informe um valor numérico válido.") from error
+        return float(transfer.normalize_one_decimal(text))
 
     @staticmethod
     def _format_decimal(value):
-        return (f"{float(value):g}").replace(".", ",")
+        return transfer.format_one_decimal(value, decimal_separator=",")
 
     @staticmethod
     def _hours_to_decimal(value):
@@ -476,9 +508,12 @@ class QualidadeForm:
         records = []
         for record in self.records:
             values = list(record)
+            if values[2] is not None:
+                values[2] = self._decimal_from_input(str(values[2]))
             automatic_value = self._automatic_real(record[1])
-            if automatic_value is not None:
-                values[3] = automatic_value
+            actual_value = automatic_value if automatic_value is not None else values[3]
+            if actual_value is not None:
+                values[3] = self._decimal_from_input(str(actual_value))
             records.append(tuple(values))
         return records
 
@@ -529,12 +564,27 @@ class QualidadeForm:
         return max((int(row[0]) for row in self.records if row[0] is not None), default=0) + 1
 
     def export_csv(self):
-        rows = [record[:5] for record in self.records]
+        rows = self._export_rows(as_text=True)
         transfer.export_csv(self.root, "Exportar qualidade", "qualidade.csv", TRANSFER_HEADERS, rows)
 
     def export_excel(self):
-        rows = [record[:5] for record in self.records]
+        rows = self._export_rows()
         transfer.export_excel(self.root, "Exportar qualidade", "qualidade.xlsx", "Qualidade", TRANSFER_HEADERS, rows)
+
+    def _export_rows(self, as_text=False):
+        rows = []
+        for record in self.records:
+            target = transfer.normalize_one_decimal(record[2])
+            actual = transfer.normalize_one_decimal(record[3])
+            attainment = transfer.quality_attainment(target, actual)
+            rows.append((
+                *record[:2],
+                transfer.format_one_decimal(target) if as_text else float(target),
+                transfer.format_one_decimal(actual) if as_text else float(actual),
+                f"{transfer.format_one_decimal(attainment * 100)}%" if as_text else attainment,
+                *record[4:5],
+            ))
+        return rows
 
     def import_csv(self):
         rows = transfer.read_csv(self.root, "Importar métricas")
@@ -552,16 +602,24 @@ class QualidadeForm:
         for row in rows:
             data = transfer.normalized(row)
             metrica = transfer.field(data, "metrica", "métrica")
-            if not metrica or metrica.casefold() in existing:
+            if (not transfer.has_required_fields(
+                    data, ("metrica", "métrica"), ("valor_alvo", "valor-alvo", "alvo"),
+                    ("valor_real", "valor-real", "real"), ("status",),
+                ) or metrica.casefold() in existing):
                 skipped += 1
                 continue
             try:
-                target_text = transfer.field(data, "valor_alvo", "valor-alvo", "alvo").replace(",", ".")
-                actual_text = transfer.field(data, "valor_real", "valor-real", "real").replace(",", ".")
+                status = transfer.field(data, "status").upper()
+                if status not in {value.upper() for value in self.status_options}:
+                    raise ValueError("Status inválido.")
                 save_qualidade(None, metrica.upper(),
-                               float(target_text) if target_text else 0.0,
-                               float(actual_text) if actual_text else 0.0,
-                               transfer.field(data, "status").upper(), [])
+                               float(transfer.normalize_one_decimal(
+                                   transfer.field(data, "valor_alvo", "valor-alvo", "alvo")
+                               )),
+                               float(transfer.normalize_one_decimal(
+                                   transfer.field(data, "valor_real", "valor-real", "real")
+                               )),
+                               status, [])
                 existing.add(metrica.casefold())
                 imported += 1
             except (ValueError, sqlite3.Error):
@@ -577,11 +635,11 @@ class QualidadeForm:
     def apply_filters(self):
         query = self.search_var.get().strip().casefold()
         effective_records = self._effective_records()
-        dataframe, overall_index = self._calculate_quality_metrics(effective_records)
+        attainments, overall_index = self._calculate_quality_metrics(effective_records)
         self.quality_index_var.set(self._format_percentage(overall_index))
         scores_by_id = {
-            int(dataframe.loc[index, "Id_Qualidade"]): dataframe.loc[index, "Atingimento"]
-            for index in dataframe.index
+            int(row[0]): attainment
+            for row, attainment in zip(effective_records, attainments)
         }
         filtered = [row for row in effective_records if not query or query in " ".join(str(value or "") for value in row).casefold()]
         self.tree.delete(*self.tree.get_children())
@@ -590,31 +648,46 @@ class QualidadeForm:
         else:
             self.empty_label.place(relx=0.5, rely=0.5, anchor="center")
         for index, row in enumerate(filtered):
-            values = (*row[:4], self._format_percentage(scores_by_id[int(row[0])]), row[4], row[6] or "SEM HISTÓRIAS VINCULADAS")
+            values = (
+                *row[:2], self._format_decimal(row[2]), self._format_decimal(row[3]),
+                self._format_percentage(scores_by_id[int(row[0])]), row[4],
+                row[6] or "SEM HISTÓRIAS VINCULADAS",
+            )
             self.tree.insert("", "end", iid=str(index), values=values, tags=("even" if index % 2 == 0 else "odd",))
         self.count_label.configure(text=f"{len(filtered)} MÉTRICAS" if len(filtered) != 1 else "1 MÉTRICA")
         grid_rows = [
-            (*row[:4], self._format_percentage(scores_by_id[int(row[0])]), row[4], row[6] or "SEM HISTÓRIAS VINCULADAS")
+            (
+                *row[:2], self._format_decimal(row[2]), self._format_decimal(row[3]),
+                self._format_percentage(scores_by_id[int(row[0])]), row[4],
+                row[6] or "SEM HISTÓRIAS VINCULADAS",
+            )
             for row in filtered
         ]
         fit_tree_columns(self.tree, self.root, GRID_COLUMNS, grid_rows)
 
     @staticmethod
     def _calculate_quality_metrics(records):
-        dataframe = pd.DataFrame(records, columns=QUALITY_RECORD_COLUMNS)
-        if dataframe.empty:
-            dataframe["Atingimento"] = pd.Series(dtype="float64")
-            return dataframe, 0.0
-        target_values = pd.to_numeric(dataframe["Valor_Alvo"], errors="coerce")
-        actual_values = pd.to_numeric(dataframe["Valor_Real"], errors="coerce")
-        attainment = actual_values.div(target_values)
-        attainment = attainment.replace({float("inf"): 1.0, float("-inf"): 0.0}).clip(upper=1).fillna(0)
-        dataframe["Atingimento"] = attainment
-        return dataframe, float(attainment.mean())
+        attainments = []
+        for record in records:
+            values = []
+            for value in (record[2], record[3]):
+                try:
+                    number = float(transfer.normalize_one_decimal(value)) if value is not None else 0.0
+                except (TypeError, ValueError):
+                    number = 0.0
+                values.append(number if math.isfinite(number) else 0.0)
+            target, actual = values
+            if target == 0:
+                attainment = 1.0 if actual > 0 else 0.0
+            else:
+                attainment = min(actual / target, 1.0)
+            attainments.append(attainment)
+        average = sum(attainments) / len(attainments) if attainments else 0.0
+        return attainments, average
 
     @staticmethod
     def _format_percentage(value):
-        return f"{float(value) * 100:.1f}%".replace(".", ",")
+        return f"{transfer.format_one_decimal(float(value) * 100, decimal_separator=',')}%"
 
     def _update_form_achievement(self, *_args):
         try:
@@ -624,10 +697,10 @@ class QualidadeForm:
             self.achievement_var.set("0,0%")
             self._update_quality_index()
             return
-        dataframe, _overall = self._calculate_quality_metrics(
+        attainments, _overall = self._calculate_quality_metrics(
             [(None, None, target_value, actual_value, None, 0, "")]
         )
-        self.achievement_var.set(self._format_percentage(dataframe.loc[0, "Atingimento"]))
+        self.achievement_var.set(self._format_percentage(attainments[0]))
         self._update_quality_index((target_value, actual_value))
 
     def search_quality(self):
@@ -661,6 +734,10 @@ class QualidadeForm:
             target = self._decimal_from_input(target_text)
             automatic_value = self._automatic_real(metric)
             actual = automatic_value if automatic_value is not None else self._decimal_from_input(actual_text)
+            target = self._decimal_from_input(str(target))
+            actual = self._decimal_from_input(str(actual))
+            self.target_var.set(self._format_decimal(target))
+            self.actual_var.set(self._format_decimal(actual))
             record_id = self.editing_id
             if record_id is None:
                 existing = next(

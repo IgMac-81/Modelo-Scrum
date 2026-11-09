@@ -19,7 +19,7 @@ Aplicação desktop em **Python + Tkinter** para gerenciar um projeto Scrum comp
 - A aplicação **sempre abre no Menu Principal**.
 - Botões de acesso às telas à esquerda, com resumo objetivo de cada formulário à direita.
 - **Combobox + botão "Abrir manual"**: manual de instruções detalhado de cada formulário (objetivo, dados, automações e ações).
-- **Botão "Novo projeto"**: apaga todos os dados do projeto atual (histórias, tarefas, históricos, governança, transparência e qualidade) com confirmação, mantendo as tabelas de referência (Fibonacci e Status).
+- **Botão "Novo projeto"**: permite exportar todas as tabelas do banco em Excel, CSV ou PDF antes de limpar os registros do projeto. O cancelamento da exportação ou da confirmação preserva os dados atuais. A limpeza mantém todas as tabelas de referência e configuração preenchidas e atualiza os formulários abertos.
 
 ### Product Backlog
 - Cadastro de histórias: módulo, história de usuário, prioridade, Story Points (Fibonacci), sprint alocada, status e observações.
@@ -70,12 +70,24 @@ pip install -r requirements.txt
 
 | Pacote | Uso |
 |---|---|
-| pandas | Cálculo de atingimento/índice na Qualidade |
+| pandas | Dependência opcional para Qualidade; o cálculo usa Python nativo e continua disponível se o carregamento falhar |
 | openpyxl | Importação/exportação Excel |
 | matplotlib | Gráficos dos Dashboards |
 | pytest | Testes |
 
 O Tkinter e o SQLite já vêm com o Python.
+
+Para Python 3.14, o projeto requer pandas 2.3.3 ou superior, limitado à série 2.x.
+No VS Code, selecione o interpretador desejado com **Python: Select Interpreter** e
+instale as dependências no terminal associado a esse mesmo ambiente:
+
+```powershell
+python -m pip install -r requirements.txt
+python -c "import sys, importlib.metadata as m; print(sys.executable); print(sys.version); print('pandas', m.version('pandas'))"
+```
+
+Uma instalação compatível não elimina bloqueios impostos pela política de segurança
+do Windows. Não desative ou contorne a política para executar a aplicação.
 
 ## Como executar
 
@@ -130,16 +142,20 @@ Scrum/
 - Arquivo: `db/agile_backlog.db`, com caminho resolvido em `src/database.py`:
   - **Modo desenvolvimento**: usa o banco da pasta `db/` do projeto.
   - **Modo empacotado (Scrum.exe)**: usa/cria o banco na subpasta `db/` ao lado do executável, copiando o banco semente embutido na primeira execução.
-- Tabelas de dados: `Product_Backlog`, `Sprints_Backlog`, `Historico_Sprints`, `Governanca`, `Transparencia`, `Qualidade`, `Roadmap` e vínculos `Backlog_Governanca`, `Backlog_Transparencia`, `Backlog_Qualidade`.
-- Tabelas de referência (preservadas no "Novo projeto"): `Fibonacci`, `Status_ProductBacklog`, `Status_Sprint`.
+- Tabelas com dados de projeto: `Product_Backlog`, `Sprints_Backlog`, `Historico_Sprints`, `Governanca`, `Transparencia`, `Qualidade`, `Roadmap` e vínculos `Backlog_Governanca`, `Backlog_Transparencia`, `Backlog_Qualidade`. "Novo projeto" limpa os registros dessas tabelas sem apagar ou recriar nenhuma tabela.
+- Tabelas de referência/configuração (preservadas e exportadas no "Novo projeto"): `Fibonacci`, `Status_ProductBacklog`, `Status_Sprint` e quaisquer outras tabelas de apoio presentes no banco.
+- As conexões do aplicativo ativam as chaves estrangeiras do SQLite. Na primeira abertura de bancos antigos, referências de histórias em tarefas e históricos são normalizadas para o Id do Product Backlog correspondente.
 - Para recriar a estrutura em um banco novo: `python db/create_tables.py`.
+
+Nas importações CSV/Excel, registros sem campos obrigatórios, referências válidas ou valores numéricos/datas aceitos pelo formulário são ignorados e contabilizados no resumo.
 
 ## Problemas comuns
 
 | Sintoma | Solução |
 |---|---|
 | `python` não é reconhecido no terminal | Use o caminho completo do interpretador (ex.: `C:/Python314/python.exe src/main.py`) ou adicione o Python ao PATH |
-| `ModuleNotFoundError: No module named 'pandas'` (ou outra dependência) | Execute `pip install -r requirements.txt` |
+| `ModuleNotFoundError: No module named 'pandas'` (ou outra dependência) | Selecione o interpretador correto e execute `python -m pip install -r requirements.txt` nesse ambiente |
+| `DLL load failed while importing timezones` ou bloqueio por Controle de Aplicativo | A Qualidade usa cálculos nativos e informa o erro. Solicite ao administrador que consulte os eventos do AppLocker ou Code Integrity e autorize o arquivo identificado pela política, se apropriado. `pandas\_libs\tslibs\timezones*.pyd` é a extensão cujo carregamento falhou; a mensagem isolada não identifica qual arquivo foi bloqueado |
 | Gráficos dos Dashboards não aparecem | Instale o matplotlib (`pip install matplotlib`); o restante do app continua funcionando |
 | Antivírus/SmartScreen bloqueia o Scrum.exe | Clique em "Mais informações" → "Executar assim mesmo" (comum em executáveis PyInstaller não assinados) |
 | Dados "sumiram" após usar o exe | O exe usa o banco em `db/` **ao lado dele**, não o banco do projeto; copie o `agile_backlog.db` desejado para essa pasta |

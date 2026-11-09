@@ -287,7 +287,11 @@ class TransparenciaForm:
         for row in rows:
             data = transfer.normalized(row)
             relatorio = transfer.field(data, "relatorio", "relatório")
-            if not relatorio or relatorio.casefold() in existing:
+            if (not transfer.has_required_fields(
+                    data, ("relatorio", "relatório"),
+                    ("frequencia_publicacao", "frequência", "frequencia"),
+                    ("responsavel", "responsável"), ("visibilidade",),
+                ) or relatorio.casefold() in existing):
                 skipped += 1
                 continue
             try:

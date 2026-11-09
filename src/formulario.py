@@ -13,9 +13,11 @@ from database import (
     get_status_product_backlog,
     insert_product_backlog,
     list_product_backlog,
+    get_database_tables,
     reset_project_data,
     update_product_backlog,
 )
+import data_transfer as transfer
 from grid_sizing import fit_tree_columns
 
 
@@ -239,23 +241,118 @@ class BacklogApp:
         ttk.Button(window, text="Fechar", command=window.destroy).grid(row=2, column=0, sticky="e", padx=18, pady=14)
 
     def start_new_project(self):
-        confirmed = messagebox.askyesno(
+        export_choice = messagebox.askyesnocancel(
             "Iniciar novo projeto",
-            "Apagar TODOS os dados do projeto atual?\n\n"
-            "Serão removidos: histórias, tarefas, históricos, governança, transparência e qualidade.\n"
-            "As tabelas de referência (Fibonacci e Status) serão mantidas.",
-            icon="warning", parent=self.root,
+            "Deseja exportar todos os dados do projeto atual antes de criar um novo projeto?",
+            parent=self.root,
         )
-        if not confirmed:
+        if export_choice is None:
             return
+        if export_choice:
+            file_format = self._choose_project_export_format()
+            if file_format is None:
+                return
+            extensions = {"xlsx": ".xlsx", "csv": ".csv", "pdf": ".pdf"}
+            format_labels = {"xlsx": "Excel", "csv": "CSV", "pdf": "PDF"}
+            extension = extensions[file_format]
+            path = filedialog.asksaveasfilename(
+                parent=self.root,
+                title="Exportar dados do projeto",
+                defaultextension=extension,
+                filetypes=[(format_labels[file_format], f"*{extension}")],
+                initialfile=f"projeto{extension}",
+            )
+            if not path:
+                return
+            try:
+                transfer.write_database_export(path, file_format, get_database_tables())
+            except (ImportError, OSError, ValueError, sqlite3.Error, zipfile.BadZipFile) as error:
+                messagebox.showerror("Erro ao exportar projeto", str(error), parent=self.root)
+                return
+            if not messagebox.askyesno(
+                "Exportação concluída",
+                "Exportação concluída. Deseja criar um novo projeto agora?",
+                parent=self.root,
+            ):
+                return
+        elif not self._confirm_project_reset():
+            return
+
         try:
             reset_project_data()
         except sqlite3.Error as error:
             messagebox.showerror("Erro ao limpar dados", str(error), parent=self.root)
             return
         self.refresh_records()
+        self.clear_form()
+        for form_name in (
+            "sprint_form", "history_form", "governance_form",
+            "transparency_form", "quality_form",
+        ):
+            form = getattr(self, form_name, None)
+            if form is not None:
+                form.refresh_records()
+                form.clear_form()
+        if hasattr(self, "dashboard_form"):
+            self.dashboard_form.refresh_records()
         messagebox.showinfo("Novo projeto",
-                            "Dados do projeto apagados. As referências foram mantidas.", parent=self.root)
+                            "Novo projeto vazio criado. As tabelas de referência e configuração foram mantidas.",
+                            parent=self.root)
+
+    def _choose_project_export_format(self):
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Formato de exportação")
+        dialog.transient(self.root)
+        dialog.resizable(False, False)
+        dialog.grab_set()
+        selected_format = tk.StringVar(master=dialog, value="xlsx")
+        result = {"format": None}
+
+        ttk.Label(dialog, text="Escolha o formato para exportar os dados:").pack(
+            anchor="w", padx=18, pady=(16, 8)
+        )
+        for label, file_format in (
+            ("Excel (.xlsx)", "xlsx"),
+            ("CSV (.csv)", "csv"),
+            ("PDF (.pdf)", "pdf"),
+        ):
+            ttk.Radiobutton(
+                dialog, text=label, variable=selected_format, value=file_format,
+            ).pack(anchor="w", padx=18, pady=3)
+
+        buttons = ttk.Frame(dialog)
+        buttons.pack(fill="x", padx=18, pady=16)
+        ttk.Button(buttons, text="Continuar", command=lambda: (
+            result.update(format=selected_format.get()), dialog.destroy()
+        )).pack(side="right", padx=(8, 0))
+        ttk.Button(buttons, text="Cancelar", command=dialog.destroy).pack(side="right")
+        dialog.protocol("WM_DELETE_WINDOW", dialog.destroy)
+        self.root.wait_window(dialog)
+        return result["format"]
+
+    def _confirm_project_reset(self):
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Confirmar novo projeto")
+        dialog.transient(self.root)
+        dialog.resizable(False, False)
+        dialog.grab_set()
+        result = {"confirmed": False}
+        warning = (
+            "ATENÇÃO: todos os dados do projeto atual serão removidos e um novo "
+            "projeto vazio será criado. Esta operação não poderá ser desfeita."
+        )
+        ttk.Label(dialog, text=warning, wraplength=420, justify="left").pack(
+            padx=20, pady=(20, 14)
+        )
+        buttons = ttk.Frame(dialog)
+        buttons.pack(fill="x", padx=20, pady=(0, 16))
+        ttk.Button(buttons, text="Continuar", command=lambda: (
+            result.update(confirmed=True), dialog.destroy()
+        )).pack(side="right", padx=(8, 0))
+        ttk.Button(buttons, text="Cancelar", command=dialog.destroy).pack(side="right")
+        dialog.protocol("WM_DELETE_WINDOW", dialog.destroy)
+        self.root.wait_window(dialog)
+        return result["confirmed"]
 
     def show_sprint_backlog(self):
         self.menu_frame.pack_forget()
@@ -344,6 +441,32 @@ class BacklogApp:
         self.root.title("Scrum | Transparência")
 
     def show_quality(self):
+        created_quality_form = False
+        if not hasattr(self, "quality_form"):
+            try:
+                from qualidade_formulario import PANDAS_IMPORT_ERROR, QualidadeForm
+
+                self.quality_form = QualidadeForm(self.root, self.show_main_menu)
+                created_quality_form = True
+            except ImportError as error:
+                messagebox.showerror(
+                    "Qualidade indisponível",
+                    "Não foi possível carregar o módulo Qualidade por uma dependência ausente ou bloqueada.\n\n"
+                    f"Detalhes técnicos: {error}",
+                    parent=self.root,
+                )
+                return
+            if PANDAS_IMPORT_ERROR and not getattr(self, "_quality_fallback_warning_shown", False):
+                messagebox.showwarning(
+                    "Qualidade em modo alternativo",
+                    "Uma extensão nativa do pandas não pôde ser carregada. O formulário continuará "
+                    "disponível com os cálculos alternativos sem pandas.\n\n"
+                    "Se o Windows bloqueou o arquivo por Controle de Aplicativos, solicite ao "
+                    "administrador que revise a política para a extensão pandas._libs.tslibs.timezones.\n\n"
+                    f"Detalhes técnicos: {PANDAS_IMPORT_ERROR}",
+                    parent=self.root,
+                )
+                self._quality_fallback_warning_shown = True
         self.menu_frame.pack_forget()
         self.header.pack_forget()
         self.content.pack_forget()
@@ -351,11 +474,7 @@ class BacklogApp:
             form = getattr(self, form_name, None)
             if form:
                 form.frame.pack_forget()
-        if not hasattr(self, "quality_form"):
-            from qualidade_formulario import QualidadeForm
-
-            self.quality_form = QualidadeForm(self.root, self.show_main_menu)
-        else:
+        if not created_quality_form:
             self.quality_form.frame.pack(fill="both", expand=True)
             self.quality_form.refresh_records()
         self.root.title("Scrum | Qualidade")
@@ -393,6 +512,7 @@ class BacklogApp:
         self.menu_frame.pack_forget()
         self.header.pack(fill="x")
         self.content.pack(fill="both", expand=True)
+        self.refresh_records()
         self.root.title("Scrum | Product Backlog")
 
     def _build_form(self):
@@ -420,7 +540,7 @@ class BacklogApp:
         self.priority_combo.bind("<<ComboboxSelected>>", self._priority_changed)
 
         self.points_combo = self._add_combo("Story Points", self.points_var, [])
-        self._add_combo("Sprint alocada", self.sprint_var, self.sprint_options)
+        self.sprint_combo = self._add_combo("Sprint alocada", self.sprint_var, self.sprint_options)
         self._add_status_picker()
         ttk.Label(self.form_body, text="Observações").pack(anchor="w", pady=(11, 5))
         self.notes_text = self._add_text(3)
@@ -524,7 +644,8 @@ class BacklogApp:
         search.grid(row=0, column=0, sticky="ew", padx=(0, 8))
         search.bind("<KeyRelease>", self._on_grid_search)
         ttk.Combobox(filters, textvariable=self.status_filter_var, values=["TODOS", *self.status_options], state="readonly", width=18).grid(row=0, column=1, padx=(0, 8))
-        ttk.Combobox(filters, textvariable=self.sprint_filter_var, values=["TODAS", *self.sprint_options], state="readonly", width=16).grid(row=0, column=2)
+        self.sprint_filter_combo = ttk.Combobox(filters, textvariable=self.sprint_filter_var, values=["TODAS", *self.sprint_options], state="readonly", width=16)
+        self.sprint_filter_combo.grid(row=0, column=2)
         self.status_filter_var.trace_add("write", lambda *_args: self.apply_filters())
         self.sprint_filter_var.trace_add("write", lambda *_args: self.apply_filters())
 
@@ -570,13 +691,25 @@ class BacklogApp:
     def refresh_records(self):
         try:
             self.records = list_product_backlog()
+            self._refresh_sprint_options()
         except sqlite3.Error as error:
             messagebox.showerror("Erro ao carregar backlog", str(error), parent=self.root)
             self.records = []
+            self.sprint_options = []
+            self.sprint_combo.configure(values=[])
+            self.sprint_filter_combo.configure(values=["TODAS"])
+            self.sprint_filter_var.set("TODAS")
         self.apply_filters()
         if not self.editing_id:
             self.id_var.set(self._next_id())
             self.id_entry.configure(state="readonly")
+
+    def _refresh_sprint_options(self):
+        self.sprint_options = get_sprints()
+        self.sprint_combo.configure(values=self.sprint_options)
+        self.sprint_filter_combo.configure(values=["TODAS", *self.sprint_options])
+        if self.sprint_filter_var.get() not in ("TODAS", *self.sprint_options):
+            self.sprint_filter_var.set("TODAS")
 
     def _next_id(self):
         largest = 0
@@ -808,36 +941,16 @@ class BacklogApp:
         return [record for record in self.records if str(record[0]) in visible_ids]
 
     def export_csv(self):
-        path = filedialog.asksaveasfilename(parent=self.root, title="Exportar backlog", defaultextension=".csv", filetypes=[("CSV", "*.csv")], initialfile="product_backlog.csv")
-        if not path:
-            return
-        try:
-            with open(path, "w", newline="", encoding="utf-8-sig") as output:
-                writer = csv.writer(output)
-                writer.writerow(EXPORT_COLUMNS)
-                writer.writerows(self._visible_records())
-            messagebox.showinfo("Exportação concluída", f"Arquivo salvo em:\n{path}", parent=self.root)
-        except OSError as error:
-            messagebox.showerror("Erro ao exportar CSV", str(error), parent=self.root)
+        transfer.export_csv(
+            self.root, "Exportar backlog", "product_backlog.csv",
+            EXPORT_COLUMNS, self._visible_records(),
+        )
 
     def export_excel(self):
-        path = filedialog.asksaveasfilename(parent=self.root, title="Exportar backlog", defaultextension=".xlsx", filetypes=[("Excel", "*.xlsx")], initialfile="product_backlog.xlsx")
-        if not path:
-            return
-        try:
-            from openpyxl import Workbook
-            workbook = Workbook()
-            sheet = workbook.active
-            sheet.title = "Product Backlog"
-            sheet.append(EXPORT_COLUMNS)
-            for record in self._visible_records():
-                sheet.append(list(record))
-            workbook.save(path)
-            messagebox.showinfo("Exportação concluída", f"Arquivo salvo em:\n{path}", parent=self.root)
-        except ImportError:
-            messagebox.showerror(DEPENDENCY_ERROR_TITLE, DEPENDENCY_ERROR_MESSAGE, parent=self.root)
-        except (OSError, ValueError, zipfile.BadZipFile) as error:
-            messagebox.showerror("Erro ao exportar Excel", str(error), parent=self.root)
+        transfer.export_excel(
+            self.root, "Exportar backlog", "product_backlog.xlsx",
+            "Product Backlog", EXPORT_COLUMNS, self._visible_records(),
+        )
 
     def import_csv(self):
         path = filedialog.askopenfilename(parent=self.root, title="Importar backlog", filetypes=[("CSV", "*.csv")])
@@ -876,6 +989,12 @@ class BacklogApp:
         imported = skipped = 0
         for row in rows:
             normalized = {str(key).strip().casefold(): value for key, value in row.items() if key is not None}
+            if not transfer.has_required_fields(
+                normalized, ("id",), ("módulo", "modulo"),
+                ("história", "historia", "historia_usuario"), ("status",),
+            ):
+                skipped += 1
+                continue
             values = {}
             for field, names in aliases.items():
                 value = next((normalized[name] for name in names if name in normalized), "")
@@ -888,7 +1007,10 @@ class BacklogApp:
                 skipped += 1
                 continue
             try:
-                points = int(float(values["points"])) if values["points"] else None
+                points = transfer.parse_integer(values["points"]) if values["points"] else None
+                if values["status"].upper() not in {status.upper() for status in self.status_options}:
+                    skipped += 1
+                    continue
                 insert_product_backlog(record_id, values["module"].upper(), values["story"].upper(),
                                        values["priority"].upper(), points, values["sprint"].upper(),
                                        values["status"].upper(), values["notes"].upper())

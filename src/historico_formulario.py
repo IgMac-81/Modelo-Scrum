@@ -284,22 +284,41 @@ class HistoricoSprintsForm:
     def refresh_records(self):
         try:
             self.records = list_history_sprints()
+            self._refresh_sprint_titles()
         except sqlite3.Error as error:
             messagebox.showerror("Erro ao carregar histórico", str(error), parent=self.root)
             self.records = []
+            self.sprint_titles = []
+            self.sprint_combo.configure(values=[])
         self.apply_filters()
         if not self.editing_id:
             self.history_id_var.set(self._next_history_id())
             self.history_id_entry.configure(state="readonly")
 
+    def _refresh_sprint_titles(self):
+        self.sprint_titles = get_history_sprint_titles()
+        self.sprint_combo.configure(values=self.sprint_titles)
+
     def _next_history_id(self):
         return max((int(row[0]) for row in self.records if row[0] is not None), default=0) + 1
 
     def export_csv(self):
-        transfer.export_csv(self.root, "Exportar histórico", "historico_sprints.csv", TRANSFER_HEADERS, self.records)
+        transfer.export_csv(
+            self.root, "Exportar histórico", "historico_sprints.csv",
+            TRANSFER_HEADERS, self._export_rows(),
+        )
 
     def export_excel(self):
-        transfer.export_excel(self.root, "Exportar histórico", "historico_sprints.xlsx", "Histórico", TRANSFER_HEADERS, self.records)
+        transfer.export_excel(
+            self.root, "Exportar histórico", "historico_sprints.xlsx",
+            "Histórico", TRANSFER_HEADERS, self._export_rows(),
+        )
+
+    def _export_rows(self):
+        return [
+            (*record[:8], self._format_velocity(record[8]), *record[9:])
+            for record in self.records
+        ]
 
     def import_csv(self):
         rows = transfer.read_csv(self.root, "Importar histórico")
@@ -317,24 +336,26 @@ class HistoricoSprintsForm:
         for row in rows:
             data = transfer.normalized(row)
             id_task = transfer.field(data, "id_task", "tarefa")
-            if not id_task:
+            status = transfer.field(data, "status_sprint", "status").upper()
+            if not transfer.has_required_fields(data, ("id_task", "tarefa"), ("status_sprint", "status")):
                 skipped += 1
                 continue
             try:
-                planned_text = transfer.field(data, "pontos_planejados", "planejados").replace(",", ".")
-                delivered_text = transfer.field(data, "pontos_entregues", "entregues").replace(",", ".")
-                velocity_text = transfer.field(data, "velocity_%", "velocity").replace("%", "").replace(",", ".")
+                task = get_sprint_task_for_history(id_task.upper())
+                if task is None or status not in self.status_data:
+                    raise ValueError("Tarefa ou status inválido.")
+                start_date = transfer.field(data, "data_inicio", "início", "inicio")
+                end_date = transfer.field(data, "data_fim", "fim")
+                for value in (start_date, end_date):
+                    if value:
+                        day, month, year = map(int, value.split("/"))
+                        date(year, month, day)
+                planned = int(task[3] or 0)
+                delivered = planned if status == "CONCLUÍDO" else 0
+                velocity = delivered / planned * 100 if planned else 0.0
                 insert_history_sprint(
-                    next_id, id_task.upper(),
-                    transfer.field(data, "titulo_sprint", "sprint").upper(),
-                    transfer.field(data, "user_story", "história", "historia").upper(),
-                    transfer.field(data, "data_inicio", "início", "inicio"),
-                    transfer.field(data, "data_fim", "fim"),
-                    int(float(planned_text)) if planned_text else 0,
-                    int(float(delivered_text)) if delivered_text else 0,
-                    float(velocity_text) if velocity_text else None,
-                    transfer.field(data, "capacidade_horas", "capacidade"),
-                    transfer.field(data, "status_sprint", "status").upper(),
+                    next_id, task[0], task[1], task[2], start_date or None,
+                    end_date or None, planned, delivered, velocity, task[4], status,
                 )
                 next_id += 1
                 imported += 1
@@ -382,17 +403,7 @@ class HistoricoSprintsForm:
 
     @staticmethod
     def _format_velocity(value):
-        if value is None or value == "":
-            return "0,0%"
-        if isinstance(value, str):
-            text = value.strip().replace("%", "").replace(",", ".")
-            try:
-                number = float(text)
-            except ValueError:
-                return value
-        else:
-            number = float(value)
-        return f"{number:.1f}%".replace(".", ",")
+        return transfer.format_velocity(value)
 
     def search_task(self):
         task_id = simpledialog.askstring("Pesquisar Id_Task", "Informe o Id_Task (ex.: SB-101):", parent=self.root)
@@ -427,7 +438,7 @@ class HistoricoSprintsForm:
             return
         self.task_id_var.set(task[0])
         self.sprint_title_var.set(task[1] or "")
-        self.user_story_var.set(task[2] or "")
+        self.user_story_var.set(task[6] or task[2] or "")
         self.planned_points_var.set("" if task[3] is None else str(task[3]))
         self.capacity_var.set(task[4] or "")
         self._update_delivery()
