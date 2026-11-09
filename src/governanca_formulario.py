@@ -287,17 +287,23 @@ class GovernancaForm:
         for row in rows:
             data = transfer.normalized(row)
             politica = transfer.field(data, "politica", "política")
-            if not politica or politica.casefold() in existing:
+            if (not transfer.has_required_fields(
+                    data, ("politica", "política"),
+                    ("responsavel", "responsável"), ("periodicidade",), ("status",),
+                ) or politica.casefold() in existing):
                 skipped += 1
                 continue
             try:
+                status = transfer.field(data, "status").upper()
+                if status not in {value.upper() for value in self.status_options}:
+                    raise ValueError("Status inválido.")
                 save_governanca(None, politica.upper(),
                                 transfer.field(data, "responsavel", "responsável").upper(),
                                 transfer.field(data, "periodicidade").upper(),
-                                transfer.field(data, "status").upper(), [])
+                                status, [])
                 existing.add(politica.casefold())
                 imported += 1
-            except sqlite3.Error:
+            except (ValueError, sqlite3.Error):
                 skipped += 1
         self.refresh_records()
         transfer.report(self.root, imported, skipped)

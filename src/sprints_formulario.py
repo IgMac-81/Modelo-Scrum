@@ -258,7 +258,7 @@ class SprintBacklogForm:
 
     def _resolve_story(self, _event=None):
         value = self.story_var.get().strip().upper()
-        story_id = value[:5]
+        story_id = self._story_id_from_value(value)
         story = self.story_map.get(story_id)
         if story is None:
             self.points_var.set("")
@@ -414,18 +414,22 @@ class SprintBacklogForm:
 
     def _normalize_time_entry(self, event):
         entry = event.widget
-        digits = re.sub(r"[^0-9]", "", entry.get())[:4]
-        if not digits:
+        normalized = self._normalize_time_value(entry.get())
+        if normalized != entry.get():
             entry.delete(0, tk.END)
-            entry.insert(0, "00:00")
-            self._update_remaining()
-            return
+            entry.insert(0, normalized)
+        self._update_remaining()
+
+    @staticmethod
+    def _normalize_time_value(value):
+        digits = re.sub(r"[^0-9]", "", value)[:4]
+        if not digits:
+            return "00:00"
         hours = int(digits[:2])
         minutes = int(digits[2:4].ljust(2, "0")) if len(digits) > 2 else 0
         if minutes < 60:
-            entry.delete(0, tk.END)
-            entry.insert(0, f"{hours:02d}:{minutes:02d}")
-        self._update_remaining()
+            return f"{hours:02d}:{minutes:02d}"
+        return value
 
     @staticmethod
     def _time_to_minutes(value):
@@ -440,6 +444,18 @@ class SprintBacklogForm:
             hours_text, minutes_text = value.split(":", 1)
             hours = int(hours_text or 0)
             minutes = int(minutes_text or 0)
+        if minutes > 59:
+            raise ValueError("Minutos devem estar entre 00 e 59.")
+        return hours * 60 + minutes
+
+    @staticmethod
+    def _import_time_to_minutes(value):
+        text = value.strip()
+        if not text:
+            return 0
+        if not re.fullmatch(r"\d{1,4}:\d{2}", text):
+            raise ValueError("Use o formato HH:MM para importar horas.")
+        hours, minutes = map(int, text.split(":"))
         if minutes > 59:
             raise ValueError("Minutos devem estar entre 00 e 59.")
         return hours * 60 + minutes
@@ -527,12 +543,13 @@ class SprintBacklogForm:
     def refresh_records(self):
         try:
             self.records = list_sprint_backlog()
+            self.story_options = get_product_backlog_stories()
+            self.story_map = {str(row[0]).upper(): row for row in self.story_options}
         except sqlite3.Error as error:
             messagebox.showerror("Erro ao carregar sprints", str(error), parent=self.root)
             self.records = []
-        if not self.editing_id:
-            self.story_options = get_product_backlog_stories()
-            self.story_map = {str(row[0]).upper(): row for row in self.story_options}
+            self.story_options = []
+            self.story_map = {}
         self.apply_filters()
         if not self.editing_id:
             self.id_var.set(self._next_task_id())
@@ -569,24 +586,41 @@ class SprintBacklogForm:
             data = transfer.normalized(row)
             id_task = transfer.field(data, "id_task", "id")
             user_story = transfer.field(data, "user_story", "história", "historia")
-            if not id_task or not user_story or id_task.upper() in existing:
+            if (not transfer.has_required_fields(
+                    data, ("id_task", "id"), ("titulo_sprint", "sprint"),
+                    ("user_story", "história", "historia"),
+                    ("subtarefa_tecnica", "subtarefa técnica", "subtarefa"), ("status",),
+                ) or id_task.upper() in existing):
                 skipped += 1
                 continue
-            points_text = transfer.field(data, "story_points", "pontos").replace(",", ".")
             try:
-                points = int(float(points_text)) if points_text else None
+                story = self._matches_story(user_story)
+                status = transfer.field(data, "status").upper()
+                if story is None or status not in self.status_data:
+                    raise ValueError("História ou status inválido.")
+                estimated = self._import_time_to_minutes(
+                    transfer.field(data, "horas_estimadas", "estimadas")
+                )
+                spent = self._import_time_to_minutes(
+                    transfer.field(data, "horas_gastas", "gastas")
+                )
+                date_text = transfer.field(data, "data_conclusao", "conclusão", "conclusao")
+                if date_text:
+                    day, month, year = map(int, date_text.split("/"))
+                    date(year, month, day)
+                remaining = 0 if status == "CONCLUÍDO" else max(0, estimated - spent)
                 insert_sprint_backlog(
                     id_task.upper(),
                     transfer.field(data, "titulo_sprint", "sprint").upper(),
-                    user_story.upper(),
+                    story[0],
                     transfer.field(data, "subtarefa_tecnica", "subtarefa técnica", "subtarefa").upper(),
                     transfer.field(data, "responsavel", "responsável").upper(),
-                    points,
-                    transfer.field(data, "horas_estimadas", "estimadas"),
-                    transfer.field(data, "horas_gastas", "gastas"),
-                    transfer.field(data, "horas_restantes", "restantes"),
-                    transfer.field(data, "status").upper(),
-                    transfer.field(data, "data_conclusao", "conclusão", "conclusao"),
+                    story[2],
+                    self._minutes_to_time(estimated),
+                    self._minutes_to_time(spent),
+                    self._minutes_to_time(remaining),
+                    status,
+                    date_text or None,
                 )
                 existing.add(id_task.upper())
                 imported += 1
@@ -649,17 +683,31 @@ class SprintBacklogForm:
             self.apply_filters()
 
     def _matches_story(self, user_story):
-        story_id = user_story.strip().upper()[:5]
+        story_id = self._story_id_from_value(user_story)
         return self.story_map.get(story_id)
+
+    @staticmethod
+    def _story_id_from_value(user_story):
+        match = re.match(r"^(US-\d+)(?:\s|$)", str(user_story or "").strip(), re.IGNORECASE)
+        return match.group(1).upper() if match else ""
 
     def save_record(self):
         task_id = self.id_var.get().strip().upper()
-        sprint_title = self.sprint_var.get().strip().upper()
+        sprint_title = self.sprint_var.get().strip()
+        if sprint_title.casefold() == self.sprint_entry.placeholder.casefold():
+            sprint_title = ""
+        sprint_title = sprint_title.upper()
         user_story = self.story_var.get().strip().upper()
         if user_story == getattr(self.story_entry, "placeholder", None):
             user_story = ""
         story = self._matches_story(user_story)
-        subtask = self.subtask_var.get().strip().upper()
+        subtask = self.subtask_var.get().strip()
+        if subtask.casefold() == self.subtask_entry.placeholder.casefold():
+            subtask = ""
+        subtask = subtask.upper()
+        owner = self.owner_var.get().strip()
+        if owner.casefold() == self.owner_entry.placeholder.casefold():
+            owner = ""
         status = self.status_var.get().strip().upper()
         missing = [label for label, value in (("Id_Task", task_id), ("Título da sprint", sprint_title), ("User_Story", story), ("Subtarefa técnica", subtask), ("Status", status)) if not value]
         if missing:
@@ -667,9 +715,13 @@ class SprintBacklogForm:
             return
         self.story_var.set(f"{story[0]} {story[1]}".upper())
         self.points_var.set("" if story[2] is None else str(story[2]))
+        estimated_text = self._normalize_time_value(self.estimated_var.get())
+        spent_text = self._normalize_time_value(self.spent_var.get())
+        self.estimated_var.set(estimated_text)
+        self.spent_var.set(spent_text)
         try:
-            estimated = self._time_to_minutes(self.estimated_var.get())
-            spent = self._time_to_minutes(self.spent_var.get())
+            estimated = self._time_to_minutes(estimated_text)
+            spent = self._time_to_minutes(spent_text)
         except ValueError as error:
             messagebox.showwarning("Hora inválida", str(error), parent=self.root)
             return
@@ -687,7 +739,7 @@ class SprintBacklogForm:
                 messagebox.showwarning("Data inválida", "Informe uma data válida no formato DD/MM/AAAA.", parent=self.root)
                 return
         points = int(story[2]) if story[2] is not None else None
-        values = (sprint_title, self.story_var.get(), subtask, self.owner_var.get().strip().upper(),
+        values = (sprint_title, story[0], subtask, owner.upper(),
                   points, self._minutes_to_time(estimated), self._minutes_to_time(spent), remaining_text,
                   status, date_text or None)
         try:

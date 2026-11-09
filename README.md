@@ -19,7 +19,7 @@ Aplicação desktop em **Python + Tkinter** para gerenciar um projeto Scrum comp
 - A aplicação **sempre abre no Menu Principal**.
 - Botões de acesso às telas à esquerda, com resumo objetivo de cada formulário à direita.
 - **Combobox + botão "Abrir manual"**: manual de instruções detalhado de cada formulário (objetivo, dados, automações e ações).
-- **Botão "Novo projeto"**: apaga todos os dados do projeto atual (histórias, tarefas, históricos, governança, transparência e qualidade) com confirmação, mantendo as tabelas de referência (Fibonacci e Status).
+- **Botão "Novo projeto"**: permite exportar todas as tabelas do banco em Excel, CSV ou PDF antes de limpar os registros do projeto. O cancelamento da exportação ou da confirmação preserva os dados atuais. A limpeza mantém todas as tabelas de referência e configuração preenchidas e atualiza os formulários abertos.
 
 ### Product Backlog
 - Cadastro de histórias: módulo, história de usuário, prioridade, Story Points (Fibonacci), sprint alocada, status e observações.
@@ -130,9 +130,12 @@ Scrum/
 - Arquivo: `db/agile_backlog.db`, com caminho resolvido em `src/database.py`:
   - **Modo desenvolvimento**: usa o banco da pasta `db/` do projeto.
   - **Modo empacotado (Scrum.exe)**: usa/cria o banco na subpasta `db/` ao lado do executável, copiando o banco semente embutido na primeira execução.
-- Tabelas de dados: `Product_Backlog`, `Sprints_Backlog`, `Historico_Sprints`, `Governanca`, `Transparencia`, `Qualidade`, `Roadmap` e vínculos `Backlog_Governanca`, `Backlog_Transparencia`, `Backlog_Qualidade`.
-- Tabelas de referência (preservadas no "Novo projeto"): `Fibonacci`, `Status_ProductBacklog`, `Status_Sprint`.
+- Tabelas com dados de projeto: `Product_Backlog`, `Sprints_Backlog`, `Historico_Sprints`, `Governanca`, `Transparencia`, `Qualidade`, `Roadmap` e vínculos `Backlog_Governanca`, `Backlog_Transparencia`, `Backlog_Qualidade`. "Novo projeto" limpa os registros dessas tabelas sem apagar ou recriar nenhuma tabela.
+- Tabelas de referência/configuração (preservadas e exportadas no "Novo projeto"): `Fibonacci`, `Status_ProductBacklog`, `Status_Sprint` e quaisquer outras tabelas de apoio presentes no banco.
+- As conexões do aplicativo ativam as chaves estrangeiras do SQLite. Na primeira abertura de bancos antigos, referências de histórias em tarefas e históricos são normalizadas para o Id do Product Backlog correspondente.
 - Para recriar a estrutura em um banco novo: `python db/create_tables.py`.
+
+Nas importações CSV/Excel, registros sem campos obrigatórios, referências válidas ou valores numéricos/datas aceitos pelo formulário são ignorados e contabilizados no resumo.
 
 ## Problemas comuns
 
